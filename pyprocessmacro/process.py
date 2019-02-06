@@ -598,11 +598,12 @@ class Process(object):
         y_exogvars = self._equations[0][1]
         m_exogvars = self._equations[1][1]
 
-        if n_mods == 0: # No moderators, so no additional analysis.
+        if n_mods == 0:  # No moderators, so no additional analysis.
             return []
 
         terms = y_exogvars + m_exogvars
-        threeway = any([1 if len(term.split("*")) == 3 else 0 for term in terms])  # Find if there is any three-way interaction
+        threeway = any(
+            [1 if len(term.split("*")) == 3 else 0 for term in terms])  # Find if there is any three-way interaction
 
         if n_mods == 1:
             return ["MM"]
@@ -678,14 +679,15 @@ class Process(object):
 
     def _prepare_data(self):
         """
-        Subset the dataframe to the columns needed for estimation purposes, and add a constant.
+        Subset the dataframe to the columns needed for estimation purposes, add a constant, and drop missing
+        observations from the dataset.
         :return: pd.DataFrame
         """
         # Subset the data to the columns used in the model
         data = self.data[self.varlist].copy()
-        data = data[pd.notnull(data)].reset_index(drop=True)
+        data = data.dropna().reset_index()
 
-        # Mapping each variable name to a unique variable code, and renaming the columns in the data.)
+        # Map each variable name to a unique variable code, and rename the columns in the data.)
         data.rename(columns=self._var_to_symb, inplace=True)
 
         # Adding a constant to the data.
@@ -799,7 +801,7 @@ class Process(object):
             self._var_to_symb[termname] = term
             self._symb_to_var[term] = termname
 
-    def _to_indices(self, eq):
+    def _eq_to_indices(self, eq):
         """
         Convert an equation (i.e. a tuple of (endogterm, exog_terms_y) into a tuple of indices corresponding to the
         position of the terms in the data.
@@ -936,56 +938,22 @@ class Process(object):
         del df["___"]
         return df.reset_index()
 
-    def plot_indirect_effects(self, med_name=None, x=None, hue=None, row=None, col=None, mods_at=None,
-                              errstyle="band", hue_format=None, facet_kws=None, plot_kws=None, err_kws=None):
+    def get_conditional_indirect_effects(self, med_name, modval=None):
         """
-        Plot the conditional indirect effect for a given mediator, at specified values of the moderator(s).
-        The functions relies on Seaborn's FacetGrid object, to represent complex interactions between up to 5 different
-        moderators.
-
         :param med_name: string
-            The name of the mediator for which to plot the indirect effect(s).
-        :param x: string
-            The name of the moderator which levels should be represented on the x-axis of the plot
-        :param hue: string or list or None
-            The name(s) (up to two) of the moderators which (pairs of) levels should be color-coded on the plot.
-        :param row: string or None
-            If not None, multiple plots will be created on the horizontal axis, as many as there are levels of the
-            moderator 'row'.
-        :param col: string or None
-            If not None, multiple plots will be created on the vertical axis, as many as there are levels of the
-            moderator 'row'.
-        :param mods_at: dict or None
+            The name of the mediator for which to compute the conditional indirect effect(s).
+        :param modval: dict or None
             A dictionary of {'mod_name': [mod_val_1, ..., mod_val_2]} for custom levels of the moderators. By default,
             the values of the moderators are the same as the ones specified when initializing Process.
-        :param errstyle: 'band', 'ci', or 'none'
-            How to represent the confidence interval for the indirect effect. The type of CI corresponds to the type
-            specified at the initialization of the Process object.
-                If 'band', a confidence band is drawn on the plot.
-                If 'ci', confidence intervals are drawn at each discrete value of the moderator on the x-axis
-                If 'none', no confidence interval is drawn.
-        :param hue_format: string or None
-            By default, the color-code are labeled:
-                'Mod1 at val1' if there is two moderator for 'hue'.
-                'Mod2 at val1, Mod2 at val2' if there are two moderators for 'hue'.
-            Alternatively, a string that should be formatted can be passed. The string will receive as arguments:
-                var1 (the name of the first moderator)
-                var2 (the name of the second moderator, if it exists)
-                val1 (the value of the first moderator)
-                val2 (the value of the second moderator)
-            A valid string would for instance look like this: '{var1} = {val1:.4f}, {var2} = {val2:.4f}'
-        :param facet_kws: dict
-            A dictionary of arguments that should be passed to the FacetGrid object (such as sharex, sharey, size,
-            aspect...)
-        :param plot_kws:
-            A dictionary of arguments to be passed to the 'plt.scatter' function (such as linestyle, linewidth...)
-        :param err_kws:
-            A dictionary of arguments to be passed to the 'plt.fill_between' (if errstyle='band') or to the
-            'plt.errorbar' (if errstyle='ci') (such as alpha, capthick, capsize...)
-        :return: a FacetGrid object
+        :return:
+            A DataFrame of indirect Effects/SE/LLCI/ULCI, at various levels of the moderators.
         """
-        if not x:
-            raise ValueError("You must specify at least one moderator for 'x'")
+        if not self.has_mediation:
+            raise ValueError(f"Model {self.model_num} does not include a mediator.")
+
+        if len(self._moderators["indirect"]) == 0:
+            raise ValueError(f"The indirect path of Model {self.model_num} does not include a moderator.")
+
         if not med_name:
             raise ValueError("You must specify the name of the mediator for which to plot the indirect effects")
 
@@ -994,45 +962,76 @@ class Process(object):
         except ValueError:
             raise ValueError("The variable {} is not a mediator in the model.".format(med_name))
 
-        var_kwargs = {}
-        for kw, name in zip(['x', 'hue', 'row', 'col'], [x, hue, row, col]):
-            if not name:
-                symb = None
+        modval_symb = self.spotlight_values.copy()
 
-            elif isinstance(name, str):
-                symb = self._var_to_symb.get(name)
-                if not symb:
-                    raise ValueError("The variable for '{}' is not a moderator in the model.".format(kw))
-
-            elif isinstance(name, list):
-                symb = [self._var_to_symb.get(n) for n in name]
-                if None in symb:
-                    raise ValueError("The variable(s) for '{}' is (are) not moderator(s) in the model.".format(kw))
-
-            else:
-                raise ValueError("Unrecognized type for variable '{}'".format(kw))
-
-            var_kwargs[kw] = symb
-
-        if mods_at:
-            mods_at_symb = {}
-            for mod_name, mod_val in mods_at.items():
+        if modval:
+            for mod_name, mod_val in modval.items():
                 mod_symb = self._var_to_symb.get(mod_name)
                 if not mod_symb:
-                    raise ValueError("The variable {} is not a moderator in the model.".format(mod_name))
+                    raise ValueError("The variable {} is not a variable in the model.".format(mod_name))
                 else:
-                    mods_at_symb[mod_symb] = mod_val
+                    modval_symb[mod_symb] = mod_val
+
+        names, v = zip(*modval_symb.items())
+        values = np.array([i for i in product(*v)])
+        stats = self.indirect_model._get_conditional_indirect_effects(med_index, names, values)
+        if len(stats) == 5:
+            effect, _, se, llci, ulci = stats
         else:
-            mods_at_symb = {}
+            effect, se, llci, ulci = stats
 
-        get_effects = partial(self.indirect_model._get_conditional_indirect_effects, med_index)
-        g = self._plot_effects(get_effects, **dict(var_kwargs, mods_at=mods_at_symb, errstyle=errstyle,
-                                                   hue_format=hue_format, facet_kws=facet_kws, plot_kws=plot_kws,
-                                                   err_kws=err_kws))
-        return g
+        rows = np.array([effect, se, llci, ulci]).T
 
-    def plot_direct_effects(self, x=None, hue=None, row=None, col=None, mods_at=None,
-                            errstyle="band", hue_format=None, facet_kws=None, plot_kws=None, err_kws=None):
+        df1 = pd.DataFrame(rows, columns=["Effect", "SE", "LLCI", "ULCI"])
+        df2 = pd.DataFrame(values, columns=names)
+        df = df1.join(df2, how="outer")
+
+        stv = self._symb_to_var
+        df.rename(columns=lambda c: stv.get(c, c), inplace=True)
+        return df
+
+    def get_conditional_direct_effects(self, modval=None):
+        """
+        :param modval: dict or None
+            A dictionary of {'mod_name': [mod_val_1, ..., mod_val_2]} for custom levels of the moderators. By default,
+            the values of the moderators are the same as the ones specified when initializing Process.
+        :return:
+            A DataFrame of direct Effects/SE/LLCI/ULCI, at various levels of the moderators.
+        """
+        if self._moderators["x_direct"] == []:
+            raise ValueError(f"The direct path of Model {self.model_num} does not include a moderator.")
+
+        modval_symb = self.spotlight_values.copy()
+
+        if modval:
+            for mod_name, mod_val in modval.items():
+                mod_symb = self._var_to_symb.get(mod_name)
+                if not mod_symb:
+                    raise ValueError("The variable {} is not a variable in the model.".format(mod_name))
+                else:
+                    modval_symb[mod_symb] = mod_val
+
+        names, v = zip(*modval_symb.items())
+        values = np.array([i for i in product(*v)])
+        stats = self.direct_model._get_conditional_direct_effects(names, values)
+
+        if len(stats) == 5:
+            effect, _, se, llci, ulci = stats
+        else:
+            effect, se, llci, ulci = stats
+
+        rows = np.array([effect, se, llci, ulci]).T
+
+        df1 = pd.DataFrame(rows, columns=["Effect", "SE", "LLCI", "ULCI"])
+        df2 = pd.DataFrame(values, columns=names)
+        df = df1.join(df2, how="outer")
+
+        stv = self._symb_to_var
+        df.rename(columns=lambda c: stv.get(c, c), inplace=True)
+        return df
+
+    def plot_conditional_direct_effects(self, x=None, hue=None, row=None, col=None, modval=None,
+                                        errstyle="band", hue_format=None, facet_kws=None, plot_kws=None, err_kws=None):
         """
         Plot the conditional direct effects of the IV, at specified values of the moderator(s).
         The functions relies on Seaborn's FacetGrid object, to represent complex interactions between up to 5 different
@@ -1048,7 +1047,7 @@ class Process(object):
         :param col: string or None
             If not None, multiple plots will be created on the vertical axis, as many as there are levels of the
             moderator 'row'.
-        :param mods_at: dict or None
+        :param modval: dict or None
             A dictionary of {'mod_name': [mod_val_1, ..., mod_val_2]} for custom levels of the moderators. By default,
             the values of the moderators are the same as the ones specified when initializing Process.
         :param errstyle: 'band', 'ci', or 'none'
@@ -1080,230 +1079,156 @@ class Process(object):
 
         if not x:
             raise ValueError("You must specify at least one moderator for 'x'")
+        if modval is None:
+            modval = {}
 
-        var_kwargs = {}
-        for kw, name in zip(['x', 'hue', 'row', 'col'], [x, hue, row, col]):
-            if not name:
-                symb = None
+        modval_parsed = self._parse_moderator_values(x, hue, row, col, modval, "x_direct")
+        df_effects = self.get_conditional_direct_effects(modval=modval_parsed)
+        return self._plot_conditional_effects(df_effects, x, hue, row, col, errstyle, hue_format, facet_kws,
+                                              plot_kws, err_kws)
 
-            elif isinstance(name, str):
-                symb = self._var_to_symb.get(name)
-                if not symb:
-                    raise ValueError("The variable for '{}' is not a variable in the model.".format(kw))
-
-            elif isinstance(name, list):
-                symb = [self._var_to_symb.get(n) for n in name]
-                if None in symb:
-                    raise ValueError("The variable(s) for '{}' is (are) not variable(s) in the model.".format(kw))
-
-            else:
-                raise ValueError("Unrecognized type for variable '{}'".format(kw))
-
-            var_kwargs[kw] = symb
-
-        if mods_at:
-            mods_at_symb = {}
-            for mod_name, mod_val in mods_at.items():
-                mod_symb = self._var_to_symb.get(mod_name)
-                if not mod_symb:
-                    raise ValueError("The variable {} is not a variable in the model.".format(mod_name))
-                else:
-                    mods_at_symb[mod_symb] = mod_val
-        else:
-            mods_at_symb = {}
-
-        get_effects = self.direct_model._get_conditional_direct_effects
-        g = self._plot_effects(get_effects, **dict(var_kwargs, mods_at=mods_at_symb, errstyle=errstyle,
-                                                   hue_format=hue_format, facet_kws=facet_kws, plot_kws=plot_kws,
-                                                   err_kws=err_kws))
-        return g
-
-    def get_conditional_indirect_effects(self, med_name, mods_at=None):
+    def plot_conditional_indirect_effects(self, med_name=None, x=None, hue=None, row=None, col=None, modval=None,
+                                          errstyle="band", hue_format=None, facet_kws=None, plot_kws=None,
+                                          err_kws=None):
         """
+        Plot the conditional indirect effect for a given mediator, at specified values of the moderator(s).
+        The functions relies on Seaborn's FacetGrid object, to represent complex interactions between up to 5 different
+        moderators.
+
         :param med_name: string
-            The name of the mediator for which to compute the conditional indirect effect(s).
-        :param mods_at: dict or None
+            The name of the mediator for which to plot the indirect effect(s).
+        :param x: string
+            The name of the moderator which levels should be represented on the x-axis of the plot
+        :param hue: string or list or None
+            The name(s) (up to two) of the moderators which (pairs of) levels should be color-coded on the plot.
+        :param row: string or None
+            If not None, multiple plots will be created on the horizontal axis, as many as there are levels of the
+            moderator 'row'.
+        :param col: string or None
+            If not None, multiple plots will be created on the vertical axis, as many as there are levels of the
+            moderator 'row'.
+        :param modval: dict or None
             A dictionary of {'mod_name': [mod_val_1, ..., mod_val_2]} for custom levels of the moderators. By default,
             the values of the moderators are the same as the ones specified when initializing Process.
-        :return:
-            A DataFrame of indirect Effects/SE/LLCI/ULCI, at various levels of the moderators.
+        :param errstyle: 'band', 'ci', or 'none'
+            How to represent the confidence interval for the indirect effect. The type of CI corresponds to the type
+            specified at the initialization of the Process object.
+                If 'band', a confidence band is drawn on the plot.
+                If 'ci', confidence intervals are drawn at each discrete value of the moderator on the x-axis
+                If 'none', no confidence interval is drawn.
+        :param hue_format: string or None
+            By default, the color-code are labeled:
+                'Mod1 at val1' if there is two moderator for 'hue'.
+                'Mod2 at val1, Mod2 at val2' if there are two moderators for 'hue'.
+            Alternatively, a string that should be formatted can be passed. The string will receive as arguments:
+                var1 (the name of the first moderator)
+                var2 (the name of the second moderator, if it exists)
+                val1 (the value of the first moderator)
+                val2 (the value of the second moderator)
+            A valid string would for instance look like this: '{var1} = {val1:.4f}, {var2} = {val2:.4f}'
+        :param facet_kws: dict
+            A dictionary of arguments that should be passed to the FacetGrid object (such as sharex, sharey, size,
+            aspect...)
+        :param plot_kws:
+            A dictionary of arguments to be passed to the 'plt.scatter' function (such as linestyle, linewidth...)
+        :param err_kws:
+            A dictionary of arguments to be passed to the 'plt.fill_between' (if errstyle='band') or to the
+            'plt.errorbar' (if errstyle='ci') (such as alpha, capthick, capsize...)
+        :return: a FacetGrid object
         """
-        if not self.has_mediation:
-            raise ValueError(f"Model {self.model_num} does not include a mediator.")
+        if not x:
+            raise ValueError("You must specify at least one moderator for 'x'")
+        if modval is None:
+            modval = {}
 
-        if len(self._moderators["indirect"]) == 0:
-            raise ValueError(f"The indirect path of Model {self.model_num} does not include a moderator.")
+        modval_parsed = self._parse_moderator_values(x, hue, row, col, modval, path="indirect")
+        df_effects = self.get_conditional_indirect_effects(med_name=med_name, modval=modval_parsed)
 
-        if not med_name:
-            raise ValueError("You must specify the name of the mediator for which to plot the indirect effects")
+        return self._plot_conditional_effects(df_effects, x, hue, row, col, errstyle, hue_format, facet_kws,
+                                              plot_kws, err_kws)
 
-        try:
-            med_index = self._var_kwargs.get("m").index(med_name)
-        except ValueError:
-            raise ValueError("The variable {} is not a mediator in the model.".format(med_name))
-
-        mods_at_symb = self.spotlight_values.copy()
-
-        if mods_at:
-            for mod_name, mod_val in mods_at.items():
-                mod_symb = self._var_to_symb.get(mod_name)
-                if not mod_symb:
-                    raise ValueError("The variable {} is not a variable in the model.".format(mod_name))
-                else:
-                    mods_at_symb[mod_symb] = mod_val
-
-        names, v = zip(*mods_at_symb.items())
-        values = np.array([i for i in product(*v)])
-        stats = self.indirect_model._get_conditional_indirect_effects(med_index, names, values)
-        if len(stats) == 5:
-            effect, _, se, llci, ulci = stats
-        else:
-            effect, se, llci, ulci = stats
-
-        rows = np.array([effect, se, llci, ulci]).T
-
-        df1 = pd.DataFrame(rows, columns=["Effect", "SE", "LLCI", "ULCI"])
-        df2 = pd.DataFrame(values, columns=names)
-        df = df1.join(df2, how="outer")
-
-        stv = self._symb_to_var
-        df.rename(columns=lambda c: stv.get(c, c), inplace=True)
-        return df
-
-    def get_conditional_direct_effects(self, mods_at=None):
-        """
-        :param mods_at: dict or None
-            A dictionary of {'mod_name': [mod_val_1, ..., mod_val_2]} for custom levels of the moderators. By default,
-            the values of the moderators are the same as the ones specified when initializing Process.
-        :return:
-            A DataFrame of direct Effects/SE/LLCI/ULCI, at various levels of the moderators.
-        """
-        if self._moderators["indirect"] == []:
-            raise ValueError(f"The direct path of Model {self.model_num} does not include a moderator.")
-
-        mods_at_symb = self.spotlight_values.copy()
-
-        if mods_at:
-            for mod_name, mod_val in mods_at.items():
-                mod_symb = self._var_to_symb.get(mod_name)
-                if not mod_symb:
-                    raise ValueError("The variable {} is not a variable in the model.".format(mod_name))
-                else:
-                    mods_at_symb[mod_symb] = mod_val
-
-        names, v = zip(*mods_at_symb.items())
-        values = np.array([i for i in product(*v)])
-        stats = self.direct_model._get_conditional_direct_effects(names, values)
-
-        if len(stats) == 5:
-            effect, _, se, llci, ulci = stats
-        else:
-            effect, se, llci, ulci = stats
-
-        rows = np.array([effect, se, llci, ulci]).T
-
-        df1 = pd.DataFrame(rows, columns=["Effect", "SE", "LLCI", "ULCI"])
-        df2 = pd.DataFrame(values, columns=names)
-        df = df1.join(df2, how="outer")
-
-        stv = self._symb_to_var
-        df.rename(columns=lambda c: stv.get(c, c), inplace=True)
-        return df
-
-
-    def _plot_effects(self, get_effects, x=None, hue=None, row=None, col=None, mods_at=None,
-                      errstyle="band", hue_format=None, facet_kws=None, plot_kws=None, err_kws=None):
-
-        if not mods_at:
-            mods_at = {}
-
-        if not hue:
-            hue = []
-
-        data = self.data
-
+    def _parse_moderator_values(self, x, hue, row, col, modval, path):
         # Values for x-axis
-        if mods_at.get(x):
-            x_values = mods_at.get(x)
-        elif len(np.unique(data[x])) == 2:
-            x_values = np.unique(data[x])
-        else:
-            x_values = np.linspace(data[x].min(), data[x].max(), 100)
+        x_values = modval.get(x)
+        if x_values is None:
+            x_symb = self._var_to_symb[x]
+            xdata = self.data[x_symb]
+            if len(np.unique(xdata)) == 2:
+                x_values = np.unique(xdata)
+            else:
+                x_values = np.linspace(xdata.min(), xdata.max(), 100)
 
         # Values for hue
         if isinstance(hue, str):
             huevar1 = hue
             huevar2 = None
-            hue1_values = mods_at.get(huevar1, self.spotlight_values.get(huevar1))
+            hue1_values = modval.get(huevar1, self.spotlight_values.get(huevar1))
             hue2_values = [0]
-        elif isinstance(hue, list) & (len(hue) == 2):
-            huevar1 = hue[0]
-            huevar2 = hue[1]
-            hue1_values = mods_at.get(huevar1, self.spotlight_values.get(huevar1))
-            hue2_values = mods_at.get(huevar2, self.spotlight_values.get(huevar2))
-        elif isinstance(hue, list) & (len(hue) == 1):
-            huevar1 = hue[0]
-            huevar2 = None
-            hue1_values = mods_at.get(huevar1, self.spotlight_values.get(huevar1))
-            hue2_values = [0]
+        elif isinstance(hue, list):
+            if len(hue) == 2:
+                huevar1 = hue[0]
+                huevar2 = hue[1]
+                hue1_values = modval.get(huevar1, self.spotlight_values.get(huevar1))
+                hue2_values = modval.get(huevar2, self.spotlight_values.get(huevar2))
+            elif len(hue) == 1:
+                huevar1 = hue[0]
+                huevar2 = None
+                hue1_values = modval.get(huevar1, self.spotlight_values.get(huevar1))
+                hue2_values = [0]
+            else:
+                raise ValueError("The argument 'hue' must be a string or a list of length 1 or 2.")
         else:
             huevar1 = None
             huevar2 = None
             hue1_values = [0]
             hue2_values = [0]
 
-        # Values for col and row
-        col_values = mods_at.get(col, self.spotlight_values.get(col)) if col else [0]
-        row_values = mods_at.get(row, self.spotlight_values.get(row)) if row else [0]
+        col_values = modval.get(col, self.spotlight_values.get(col, [0]))
+        row_values = modval.get(row, self.spotlight_values.get(row, [0]))
 
-        var_names = [x, huevar1, huevar2, col, row]
-        other_names = [k for k in mods_at.keys() if k not in var_names]
+        mod_names = [x, huevar1, huevar2, col, row]
+        mod_values = [x_values, hue1_values, hue2_values, col_values, row_values]
 
-        other_values = [mods_at[k] for k in other_names]
+        modval_vars = {n: v for (n, v) in zip(mod_names, mod_values) if n is not None}
+        modval_others = {k: v for k, v in modval.items() if k not in modval_vars}
+        modval_others_invalid = any([len(v) > 1 for k, v in modval_others.items()])
 
-        values = np.array([i for i in product(x_values, hue1_values, hue2_values, col_values,
-                                              row_values, *other_values)])
-        names = var_names + other_names
+        if modval_others_invalid:
+            raise SyntaxError(
+                "You cannot specify more than one focal value for moderator that is not displayed in the graph.")
 
-        stats = get_effects(names, values)
-        if len(stats) == 5:
-            effect, _, se, llci, ulci = stats
-        else:
-            effect, se, llci, ulci = stats
+        modval_parsed = {**modval_others, **modval_vars}
 
-        rows = np.array([effect, se, llci, ulci]).T
+        for m in self._moderators[path]:
+            m_var = self._symb_to_var[m]
+            if modval_parsed.get(m_var) is None:
+                warnings.warn(
+                    f'The moderator {m_var} exerts an influence on the effect, but is not specified as a factor on the graph. Its value has been explicitely set to 0.',
+                    SyntaxWarning)
+                modval_parsed[m_var] = [0]
+        return modval_parsed
 
-        df1 = pd.DataFrame(rows, columns=["Effect", "SE", "LLCI", "ULCI"])
-        df2 = pd.DataFrame(values, columns=names)
-        df = df1.join(df2, how="outer")
-
-        stv = self._symb_to_var
-        df.rename(columns=lambda c: stv.get(c, c), inplace=True)
-        print(df)
-        xname = stv.get(x, x)
-        colname = stv.get(col, col)
-        rowname = stv.get(row, row)
-        huename1 = stv.get(huevar1, huevar1)
-        huename2 = stv.get(huevar2, huevar2)
-
-        # Generate legend labels for 'Hue'
-        if not hue_format:
-            if huename2:
-                hue_format = "{var1} at {hue1:.2f},  {var2} at {hue2:.2f}"
+    def _plot_conditional_effects(self, df_effects, x, hue, row, col, errstyle, hue_format, facet_kws, plot_kws,
+                                  err_kws):
+        if isinstance(hue, list):
+            huename = "Hue"
+            if len(hue) == 2:
+                if hue_format is None:
+                    hue_format = "{var1} at {hue1:.2f},  {var2} at {hue2:.2f}"
+                df_effects["Hue"] = df_effects[hue].apply(lambda x: hue_format.format(
+                    var1=hue[0],
+                    var2=hue[1],
+                    hue1=x[hue[0]],
+                    hue2=x[hue[1]]), axis=1)
             else:
+                if hue_format is None:
+                    hue_format = "{var1} at {hue1:.2f}"
+                df_effects["Hue"] = df_effects[hue[0]].apply(lambda x: hue_format.format(var1=hue[0], hue1=x))
+        elif isinstance(hue, str):
+            huename = "Hue"
+            if hue_format is None:
                 hue_format = "{var1} at {hue1:.2f}"
-        if huename2:
-            df["Hue"] = df[[huename1, huename2]].apply(lambda x: hue_format.format(
-                var1=huename1,
-                var2=huename2,
-                hue1=x[huename1],
-                hue2=x[huename2]), axis=1)
-            huename = "Hue"
-        elif huename1:
-            df["Hue"] = df[huename1].apply(lambda x: hue_format.format(
-                var1=huename1,
-                hue1=x))
-            huename = "Hue"
+            df_effects["Hue"] = df_effects[hue].apply(lambda x: hue_format.format(var1=hue, hue1=x))
         else:
             huename = None
 
@@ -1312,22 +1237,22 @@ class Process(object):
         if not plot_kws:
             plot_kws = {}
 
-        g = FacetGrid(hue=huename, data=df, col=colname, row=rowname, **facet_kws)
+        g = FacetGrid(hue=huename, data=df_effects, col=col, row=row, **facet_kws)
 
         if errstyle == "band":
             if not err_kws:
                 err_kws = {'alpha': 0.2}
-            g.map(plot_errorbands, xname, "Effect", "LLCI", "ULCI", plot_kws=plot_kws, err_kws=err_kws)
+            g.map(plot_errorbands, x, "Effect", "LLCI", "ULCI", plot_kws=plot_kws, err_kws=err_kws)
         elif errstyle == "ci":
             if not err_kws:
                 err_kws = {'alpha': 1,
                            'capthick': 1,
                            'capsize': 3}
-            df["yerr_low"] = (df["Effect"] - df["LLCI"])
-            df["yerr_high"] = (df["ULCI"] - df["Effect"])
-            g.map(plot_errorbars, xname, "Effect", "yerr_low", "yerr_high", plot_kws=plot_kws, err_kws=err_kws)
+            df_effects["yerr_low"] = (df_effects["Effect"] - df_effects["LLCI"])
+            df_effects["yerr_high"] = (df_effects["ULCI"] - df_effects["Effect"])
+            g.map(plot_errorbars, x, "Effect", "yerr_low", "yerr_high", plot_kws=plot_kws, err_kws=err_kws)
         elif errstyle == "none":
-            g.map(plt.plot, xname, "Effect", **plot_kws)
+            g.map(plt.plot, x, "Effect", **plot_kws)
 
         if facet_kws.get('margin_titles'):
             for ax in g.axes.flat:
@@ -1335,4 +1260,16 @@ class Process(object):
 
         if row and col:
             g.set_titles(row_template='{row_var} at {row_name:.2f}', col_template='{col_var} at {col_name:.2f}')
+
         return g
+
+    # DEPRECATED METHODS
+    def plot_indirect_effects(self, med_name=None, x=None, hue=None, row=None, col=None, mods_at=None,
+                              errstyle="band", hue_format=None, facet_kws=None, plot_kws=None, err_kws=None):
+        raise DeprecationWarning(
+            "The method 'plot_indirect_effects' has been deprecated. Please use the equivalent method named 'plot_conditional_indirect_effects.")
+
+    def plot_direct_effects(self, x=None, hue=None, row=None, col=None, mods_at=None,
+                            errstyle="band", hue_format=None, facet_kws=None, plot_kws=None, err_kws=None):
+        raise DeprecationWarning(
+            "The method 'plot_direct_effects' has been deprecated. Please use the equivalent method named 'plot_conditional_direct_effects.")

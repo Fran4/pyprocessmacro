@@ -8,7 +8,10 @@ import matplotlib.pyplot as plt
 from .utils import plot_errorbands, plot_errorbars
 from functools import partial
 import warnings
+import re
+
 warnings.simplefilter("default")
+
 
 class Process(object):
     __var_kws__ = {"x", "m", "w", "z", "v", "q", "y"}
@@ -253,10 +256,31 @@ class Process(object):
              'x_to_m': ["x", "w", "z", "x*z", "x*w"]}
     }
 
-    def __init__(self, data=None, model=None, modval=None, cluster=None, boot=5000, seed=12345,
-                 mc=0, conf=95, effsize=0, jn=0, hc3=0, controls=None, controls_in="all", total=0, contrast=0,
-                 center=0, quantile=0, detail=1, percent=0, logit=0, iterate=10000, convergence=0.00000001,
-                 precision=4, suppr_init=False, **kwargs):
+    def __init__(self, data: pd.DataFrame = None,
+                 model: int = None,
+                 modval: dict = None,
+                 cluster: str = None,
+                 boot: int = 5000,
+                 seed: int = 12345,
+                 mc: bool = None,
+                 conf: int = 95,
+                 effsize: bool = False,
+                 jn: bool = False,
+                 hc3: bool = False,
+                 controls: list = None,
+                 controls_in: str = "all",
+                 total: bool = False,
+                 contrast: bool = False,
+                 center: bool = False,
+                 quantile: bool = False,
+                 detail: bool = True,
+                 percent: bool = False,
+                 logit: bool = False,
+                 iterate: int = 10000,
+                 convergence: float = 0.00000001,
+                 precision: int = 4,
+                 suppr_init: bool = False,
+                 **kwargs):
         """
         Initialize a Process model, as defined in Andrew F. Hayes's book 'Introduction to Mediation, Moderation,
         and Conditional Process Analysis'.
@@ -327,17 +351,17 @@ class Process(object):
                           "Bootstrapped CI are recommended.", DeprecationWarning)
         if kwargs.pop("varorder", None):
             warnings.warn("The argument 'varorder' for normal theory tests is not supported. "
-                     "Bootstrapped CI are recommended.", DeprecationWarning)
+                          "Bootstrapped CI are recommended.", DeprecationWarning)
         if kwargs.pop("varlist", None):
             warnings.warn("The 'varlist' is not required. To specify controls, use the 'controls' arguments",
-                     DeprecationWarning)
+                          DeprecationWarning)
         if kwargs.pop("coeffci", None):
             warnings.warn("The argument 'coeffci' is not supported.", DeprecationWarning)
         if kwargs.pop("plot", None):
             warnings.warn("The argument 'plot' is not supported. Check the 'plot_direct_effects() and"
                           "plot_indirect_effects() methods instead.", DeprecationWarning)
         if kwargs.pop("save", None):
-            warnings.warn("The argument 'save' is not supported. Check the 'get_bootstrap_estimates() method to recover"
+            warnings.warn("The argument 'save' is not supported. Call the 'get_bootstrap_estimates() method to recover"
                           "the bootstrap samples instead.", DeprecationWarning)
         if kwargs.pop("effsize", None):
             warnings.warn("The argument 'effsize' for effect sizes is not supported yet."
@@ -396,13 +420,15 @@ class Process(object):
         terms_m = self._raw_equations["x_to_m"]
         terms = terms_y + terms_m
         # Moderators of X in the path to Y
-        mod_x_direct = set([i for i in self._raw_varlist if "x*{}".format(i) in terms_y])
+        x_mods_re = re.compile("^x\*([a-z])$")
+        mod_x_direct = set(filter(lambda v: "x*{}".format(v) in terms_y, self._raw_varlist))
 
         # Moderators of X in the path to M
-        mod_x_indirect = set([i for i in self._raw_varlist if "x*{}".format(i) in terms_m])
+        mod_x_indirect = set(filter(lambda v: "x*{}".format(v) in terms_m, self._raw_varlist))
 
         # Moderators of M in the path to Y
         mod_m = set([i for i in self._raw_varlist if "m*{}".format(i) in terms_y])
+        mod_m = set(filter(lambda v: "m*{}".format(v) in terms_y, self._raw_varlist))
 
         self._moderators = {
             "x_direct": mod_x_direct,
@@ -552,7 +578,8 @@ class Process(object):
     def _get_analysis_list(self):
         """
         Process always report the indirect effect/conditional indirect effect(s).
-        If exactly two moderators are present, additional analysis can be reported: the
+        If one moderator is present, Process will report the Moderated Mediation Index (MM).
+        If exactly two moderators are present, additional analysis could be reported: the
         Conditional Moderated Mediation (CMM), the Moderated Moderated Mediation (MMM), and the
         Partial Moderated Mediation (PMM). This function establishes which of those statistics should be reported:
           1. If the two moderators are on two different paths (X to M, or M to Y): both CMM and MMM are reported.
@@ -563,7 +590,7 @@ class Process(object):
         This function returns the list of additional analysis to report. If no additional analysis must be performed,
          this list is empty.
         :return: list
-            ["MMM", "CMM"], ["PMM"] or []
+            ["MM"], ["MMM", "CMM"], ["PMM"] or []
         """
         n_mods_x = len(self._moderators["x_indirect"])
         n_mods_m = len(self._moderators["m"])
@@ -571,14 +598,14 @@ class Process(object):
         y_exogvars = self._equations[0][1]
         m_exogvars = self._equations[1][1]
 
-        if n_mods == 0:
+        if n_mods == 0: # No moderators, so no additional analysis.
             return []
 
         terms = y_exogvars + m_exogvars
-        threeway = any([1 if len(term.split("*")) == 3 else 0 for term in terms])  # TODO: Ugly hack
+        threeway = any([1 if len(term.split("*")) == 3 else 0 for term in terms])  # Find if there is any three-way interaction
 
         if n_mods == 1:
-                return ["MM"]
+            return ["MM"]
         elif n_mods == 2:
             if (n_mods_m == 1) or threeway:  # Moderators on two different paths
                 return ["MMM", "CMM"]
@@ -803,7 +830,7 @@ class Process(object):
                                             self._symb_to_var, self.options)
         else:
             model_yfull = OLSOutcomeModel(data_array, y_endog, y_exogs, self._symb_to_ind,
-                                            self._symb_to_var, self.options)
+                                          self._symb_to_var, self.options)
         models[self.iv] = model_yfull
 
         if self.model_num > 3:  # Generating the model "Direct path to Y" (if it exists)
@@ -811,7 +838,7 @@ class Process(object):
                 m_endog = eq[0]
                 m_exogs = eq[1]
                 model_m = OLSOutcomeModel(data_array, m_endog, m_exogs, self._symb_to_ind,
-                                            self._symb_to_var, self.options)
+                                          self._symb_to_var, self.options)
                 models[med_name] = model_m
         return models
 
@@ -909,7 +936,6 @@ class Process(object):
         del df["___"]
         return df.reset_index()
 
-
     def plot_indirect_effects(self, med_name=None, x=None, hue=None, row=None, col=None, mods_at=None,
                               errstyle="band", hue_format=None, facet_kws=None, plot_kws=None, err_kws=None):
         """
@@ -1001,7 +1027,8 @@ class Process(object):
 
         get_effects = partial(self.indirect_model._get_conditional_indirect_effects, med_index)
         g = self._plot_effects(get_effects, **dict(var_kwargs, mods_at=mods_at_symb, errstyle=errstyle,
-                               hue_format=hue_format, facet_kws=facet_kws, plot_kws=plot_kws, err_kws=err_kws))
+                                                   hue_format=hue_format, facet_kws=facet_kws, plot_kws=plot_kws,
+                                                   err_kws=err_kws))
         return g
 
     def plot_direct_effects(self, x=None, hue=None, row=None, col=None, mods_at=None,
@@ -1032,7 +1059,7 @@ class Process(object):
                 If 'none', no confidence interval is drawn.
         :param hue_format: string or None
             By default, the color-code are labeled:
-                'Mod1 at val1' if there is two moderator for 'hue'.
+                'Mod1 at val1' if there is one moderator for 'hue'.
                 'Mod2 at val1, Mod2 at val2' if there are two moderators for 'hue'.
             Alternatively, a string that should be formatted can be passed. The string will receive as arguments:
                 var1 (the name of the first moderator)
@@ -1087,8 +1114,102 @@ class Process(object):
 
         get_effects = self.direct_model._get_conditional_direct_effects
         g = self._plot_effects(get_effects, **dict(var_kwargs, mods_at=mods_at_symb, errstyle=errstyle,
-                               hue_format=hue_format, facet_kws=facet_kws, plot_kws=plot_kws, err_kws=err_kws))
+                                                   hue_format=hue_format, facet_kws=facet_kws, plot_kws=plot_kws,
+                                                   err_kws=err_kws))
         return g
+
+    def get_conditional_indirect_effects(self, med_name, mods_at=None):
+        """
+        :param med_name: string
+            The name of the mediator for which to compute the conditional indirect effect(s).
+        :param mods_at: dict or None
+            A dictionary of {'mod_name': [mod_val_1, ..., mod_val_2]} for custom levels of the moderators. By default,
+            the values of the moderators are the same as the ones specified when initializing Process.
+        :return:
+            A DataFrame of indirect Effects/SE/LLCI/ULCI, at various levels of the moderators.
+        """
+        if not self.has_mediation:
+            raise ValueError(f"Model {self.model_num} does not include a mediator.")
+
+        if len(self._moderators["indirect"]) == 0:
+            raise ValueError(f"The indirect path of Model {self.model_num} does not include a moderator.")
+
+        if not med_name:
+            raise ValueError("You must specify the name of the mediator for which to plot the indirect effects")
+
+        try:
+            med_index = self._var_kwargs.get("m").index(med_name)
+        except ValueError:
+            raise ValueError("The variable {} is not a mediator in the model.".format(med_name))
+
+        mods_at_symb = self.spotlight_values.copy()
+
+        if mods_at:
+            for mod_name, mod_val in mods_at.items():
+                mod_symb = self._var_to_symb.get(mod_name)
+                if not mod_symb:
+                    raise ValueError("The variable {} is not a variable in the model.".format(mod_name))
+                else:
+                    mods_at_symb[mod_symb] = mod_val
+
+        names, v = zip(*mods_at_symb.items())
+        values = np.array([i for i in product(*v)])
+        stats = self.indirect_model._get_conditional_indirect_effects(med_index, names, values)
+        if len(stats) == 5:
+            effect, _, se, llci, ulci = stats
+        else:
+            effect, se, llci, ulci = stats
+
+        rows = np.array([effect, se, llci, ulci]).T
+
+        df1 = pd.DataFrame(rows, columns=["Effect", "SE", "LLCI", "ULCI"])
+        df2 = pd.DataFrame(values, columns=names)
+        df = df1.join(df2, how="outer")
+
+        stv = self._symb_to_var
+        df.rename(columns=lambda c: stv.get(c, c), inplace=True)
+        return df
+
+    def get_conditional_direct_effects(self, mods_at=None):
+        """
+        :param mods_at: dict or None
+            A dictionary of {'mod_name': [mod_val_1, ..., mod_val_2]} for custom levels of the moderators. By default,
+            the values of the moderators are the same as the ones specified when initializing Process.
+        :return:
+            A DataFrame of direct Effects/SE/LLCI/ULCI, at various levels of the moderators.
+        """
+        if self._moderators["indirect"] == []:
+            raise ValueError(f"The direct path of Model {self.model_num} does not include a moderator.")
+
+        mods_at_symb = self.spotlight_values.copy()
+
+        if mods_at:
+            for mod_name, mod_val in mods_at.items():
+                mod_symb = self._var_to_symb.get(mod_name)
+                if not mod_symb:
+                    raise ValueError("The variable {} is not a variable in the model.".format(mod_name))
+                else:
+                    mods_at_symb[mod_symb] = mod_val
+
+        names, v = zip(*mods_at_symb.items())
+        values = np.array([i for i in product(*v)])
+        stats = self.direct_model._get_conditional_direct_effects(names, values)
+
+        if len(stats) == 5:
+            effect, _, se, llci, ulci = stats
+        else:
+            effect, se, llci, ulci = stats
+
+        rows = np.array([effect, se, llci, ulci]).T
+
+        df1 = pd.DataFrame(rows, columns=["Effect", "SE", "LLCI", "ULCI"])
+        df2 = pd.DataFrame(values, columns=names)
+        df = df1.join(df2, how="outer")
+
+        stv = self._symb_to_var
+        df.rename(columns=lambda c: stv.get(c, c), inplace=True)
+        return df
+
 
     def _plot_effects(self, get_effects, x=None, hue=None, row=None, col=None, mods_at=None,
                       errstyle="band", hue_format=None, facet_kws=None, plot_kws=None, err_kws=None):
@@ -1135,16 +1256,14 @@ class Process(object):
         col_values = mods_at.get(col, self.spotlight_values.get(col)) if col else [0]
         row_values = mods_at.get(row, self.spotlight_values.get(row)) if row else [0]
 
-
         var_names = [x, huevar1, huevar2, col, row]
         other_names = [k for k in mods_at.keys() if k not in var_names]
 
-        other_values = [mods_at[k] for k in other_names] # TODO: Add failsafe here.
+        other_values = [mods_at[k] for k in other_names]
 
         values = np.array([i for i in product(x_values, hue1_values, hue2_values, col_values,
                                               row_values, *other_values)])
         names = var_names + other_names
-
 
         stats = get_effects(names, values)
         if len(stats) == 5:
@@ -1160,6 +1279,7 @@ class Process(object):
 
         stv = self._symb_to_var
         df.rename(columns=lambda c: stv.get(c, c), inplace=True)
+        print(df)
         xname = stv.get(x, x)
         colname = stv.get(col, col)
         rowname = stv.get(row, row)

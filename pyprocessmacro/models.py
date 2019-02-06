@@ -10,13 +10,14 @@ import pandas as pd
 from functools import partial
 import warnings
 
+import statsmodels.formula.api as smf
 
 class BaseLogit(object):
     """
     A convenience parent class for the methods used in Logistic models.
     """
 
-    def __init__(self, endog, exog, options):
+    def __init__(self, endog: np.array, exog: np.array, options: dict) -> None:
         self._endog = endog
         self._exog = exog
         self._n_obs = exog.shape[0]
@@ -26,11 +27,11 @@ class BaseLogit(object):
         self._options = options
 
     @staticmethod
-    def _cdf(X):
+    def _cdf(X: np.array) -> np.array:
         """
         The CDF of the logistic function.
-        :param X: A scalar
-        :return: A scalar
+        :param X: Values at which to evaluate the CDF
+        :return: The CDF of the logistic function, evaluated at X
         """
         idx = X > 0
         out = np.empty(X.size, dtype=float)
@@ -97,7 +98,7 @@ class ParallelMediationModel(object):
                  n_meds, analysis_list, symb_to_ind, symb_to_var, options=None):
         """
         :param data: array
-            An NxK array of data
+            NxK array of data
         :param exog_terms_y: list of strings
             Symbols of exogenous terms for the estimation of the outcome Y
         :param exog_terms_m: list of strings
@@ -214,7 +215,7 @@ class ParallelMediationModel(object):
                     m_b = self._compute_betas_m(m_e, m_x)
                     boot_betas_m[j][boot_ind] = m_b
                 boot_ind += 1
-            except LinAlgError: # Hessian (Logit) or X'X (OLS) cannot be inverted
+            except LinAlgError:  # Hessian (Logit) or X'X (OLS) cannot be inverted
                 n_fail_samples += 1
 
         return boot_betas_y, boot_betas_m, n_fail_samples
@@ -241,7 +242,7 @@ class ParallelMediationModel(object):
         [[ 0, 1 ], # Value of the Constant term : 0*1 = 0
          [ 1, 1 ], # Value of X term : 1*1 = 1
          [ 0, W ], # Value of the W term: 0*W = 0
-         [ 1, W ]] # Value of the X*W: 1*W = W
+         [ 1, W ]] # Value of the X*W term: 1*W = W
 
         The advantage of this matrix is that it is a symbolic expression, in which we can substitute for the values of
         the moderators, and then take the product of columns to obtain the numerical representation of the derivative
@@ -429,7 +430,6 @@ class ParallelMediationModel(object):
 
         statistics = [i.flatten() for i in [effects, se, llci, ulci]]
         return {k: v for k, v in zip(["effect", "se", "llci", "ulci"], statistics)}
-
 
     def _MM_index(self):
         """
@@ -785,7 +785,6 @@ class ParallelMediationModel(object):
         :return: The appropriate moderated/unmoderated effect(s).
         """
         return self._cond_ind_effects_wrapper() if self._has_moderation else self._simple_ind_effects_wrapper()
-
 
     def summary(self):
         """

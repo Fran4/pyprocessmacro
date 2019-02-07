@@ -421,14 +421,14 @@ class Process(object):
         terms = terms_y + terms_m
         # Moderators of X in the path to Y
         x_mods_re = re.compile("^x\*([a-z])$")
-        mod_x_direct = set(filter(lambda v: "x*{}".format(v) in terms_y, self._raw_varlist))
+        mod_x_direct = set(filter(lambda v: f"x*{v}" in terms_y, self._raw_varlist))
 
         # Moderators of X in the path to M
-        mod_x_indirect = set(filter(lambda v: "x*{}".format(v) in terms_m, self._raw_varlist))
+        mod_x_indirect = set(filter(lambda v: f"x*{v}" in terms_m, self._raw_varlist))
 
         # Moderators of M in the path to Y
-        mod_m = set([i for i in self._raw_varlist if "m*{}".format(i) in terms_y])
-        mod_m = set(filter(lambda v: "m*{}".format(v) in terms_y, self._raw_varlist))
+        mod_m = set([i for i in self._raw_varlist if f"m*{i}" in terms_y])
+        mod_m = set(filter(lambda v: f"m*{v}" in terms_y, self._raw_varlist))
 
         self._moderators = {
             "x_direct": mod_x_direct,
@@ -513,17 +513,17 @@ class Process(object):
         else:
             for k, v in options["modval"].items():
                 if not isinstance(v, list):
-                    errstr += "The value associated with {} in the dictionary 'modval' is not a list.\n".format(k)
+                    errstr += f"The value associated with {k} in the dictionary 'modval' is not a list.\n"
                 else:
                     try:
                         [float(i) for i in v]
                     except (ValueError, TypeError):
-                        errstr += "The value associated with {] in the dictionary 'modval' is not a list of numbers.\n"
+                        errstr += f"The value associated with {k} in the dictionary 'modval' is not a list of numbers.\n"
 
         if errstr != "":
-            raise ValueError("""Some errors were found in the options specified. Please correct the following error(s):
-            {}
-            """.format(errstr))
+            raise ValueError(f"""Some errors were found in the options specified. Please correct the following error(s):
+            {errstr}
+            """)
 
     def _validate_varlist_model(self):
         """
@@ -541,9 +541,9 @@ class Process(object):
                 self._var_kwargs[k] = [v]
             if isinstance(v, list):
                 if ((k != "m") & (len(v) != 1)) or ((self.model_num <= 3) & (len(v) != 1)):
-                    raise ValueError("Several variable names have been specified for '{k}'. \n"
-                                     "The Model {model} accepts only one variable for '{k}'"
-                                     .format(model=self.model_num, k=k))
+                    raise ValueError(f"Several variable names have been specified for '{k}'. \n"
+                                     f"The Model {self.model_num} accepts only one variable for '{k}'"
+                                     )
 
         var_kwargs = set(self._var_kwargs.keys())
         expected_var_kwargs = self.__models_vars__[self.model_num]
@@ -552,14 +552,12 @@ class Process(object):
         if var_kwargs != expected_var_kwargs:
             miss_vars = expected_var_kwargs - var_kwargs
             exced_vars = var_kwargs - expected_var_kwargs
-            err_str = """The variables supplied do not match the definition of Model {}
-            """.format(self.model_num)
+            err_str = f"""The variables supplied do not match the definition of Model {self.model_num}
+            """
             if miss_vars:
-                err_str += """Expected variable(s) not supplied: {}.
-            """.format(", ".join(miss_vars))
+                err_str += f"Expected variable(s) not supplied: {', '.join(miss_vars)}"
             if exced_vars:
-                err_str += """Variable(s) supplied not supported by the model: {}
-            """.format(", ".join(exced_vars))
+                err_str += f"Variable(s) supplied not supported by the model: { ', '.join(exced_vars)}"
             raise ValueError(err_str)
 
         var_kwargs_names = []
@@ -570,9 +568,8 @@ class Process(object):
         # Validate the presence of variables in the data.
         miss_var_names = set(varlist) - set(self.data.columns)
         if miss_var_names:
-            raise ValueError("""One or several of the variables supplied to the model is/are not present in the
-            DataFrame supplied. Please double check that '{}' is/are in the DataFrame.""".format(
-                ", ".join(miss_var_names)))
+            raise ValueError(f"""One or several of the variables supplied to the model is/are not present in the
+            DataFrame supplied. Please double check that '{", ".join(miss_var_names)}' is/are in the DataFrame.""")
         return varlist
 
     def _get_analysis_list(self):
@@ -665,15 +662,15 @@ class Process(object):
         for key, varnames in self._var_kwargs.items():
             if (key == "m") & (self.model_num > 3):  # Variable m is a mediator
                 for i, v in enumerate(varnames):
-                    symb_to_var["{}{}".format(key, i + 1)] = v
-                    var_to_symb[v] = "{}{}".format(key, i + 1)
+                    symb_to_var[f"{key}{i+1}"] = v
+                    var_to_symb[v] = f"{key}{i+1}"
             else:  # All other variables are moderators_all, IVs, or DVs.
-                symb_to_var["{}".format(key)] = varnames[0]
-                var_to_symb[varnames[0]] = "{}".format(key)
+                symb_to_var[f"{key}"] = varnames[0]
+                var_to_symb[varnames[0]] = f"{key}"
 
         for i, v in enumerate(self.controls):
-            var_to_symb[v] = "c{}".format(i)
-            symb_to_var["c{}".format(i)] = v
+            var_to_symb[v] = f"c{i}"
+            symb_to_var[f"c{i}"] = v
 
         return var_to_symb, symb_to_var
 
@@ -760,13 +757,12 @@ class Process(object):
             for i in range(self.n_meds):
                 for term in all_to_y_base:
                     if "m" in term:
-                        all_to_y_full.append(term.replace("m", "m{}".format(i + 1)))
+                        all_to_y_full.append(term.replace("m", f"m{i+1}"))
                     else:
                         pass
 
             eqlist.append(("y", all_to_y_full))  # Full path to Y
-            eqlist += [("m{}".format(i + 1), x_to_m_full) for i in
-                       range(self.n_meds)]  # Same equation for all mediators
+            eqlist += [(f"m{i+1}", x_to_m_full) for i in range(self.n_meds)]  # Same equation for all mediators
 
         else:  # Serial mediators are only found in model 6
             eq_y_full = ["Cons"] + [i for i in eqs_dict["eq_y"] if "m" not in i]
@@ -776,14 +772,14 @@ class Process(object):
             for i in range(self.n_meds):
                 for term in eqs_dict["all_to_y"]:
                     if "m" in term:
-                        eq_y_full.append(term.replace("m", "m{}".format(i + 1)))
+                        eq_y_full.append(term.replace("m", f"m{i+1}"))
                     else:
                         pass
 
             eqlist.append(("y", eq_y_full))  # Equation for Y
             for i in range(self.n_meds):  # One equation per mediator
-                eq_x_to_med = eq_x_to_meds_basis + ["m{}".format(j + 1) for j in range(i)]
-                eqlist.append(("m{}".format(i + 1), eq_x_to_med))
+                eq_x_to_med = eq_x_to_meds_basis + [f"m{i+1}" for j in range(i)]
+                eqlist.append((f"m{i+1}", eq_x_to_med))
         return eqlist
 
     def _add_interaction_columns(self):
@@ -865,31 +861,29 @@ class Process(object):
         initstr = ("Process successfully initialized.\n"
                    "Based on the Process Macro by Andrew F. Hayes, Ph.D. (www.afhayes.com)\n\n"
                    "\n****************************** SPECIFICATION ****************************\n\n"
-                   "Model = {}\n\n"
-                   "Variables:").format(self.model_num)
+                   f"Model = {self.model_num}\n\n"
+                   "Variables:")
         parameters = [(symb, name) for (symb, name) in self._symb_to_var.items() if "*" not in symb and "c" not in symb]
         for symb, name in parameters:
             if "*" in symb or "c" in symb:
                 pass
             else:
-                initstr += "\n    {} = {}".format(symb, name)
+                initstr += f"\n    {symb} = {name}"
         controls = [name for (symb, name) in self._symb_to_var.items() if "c" in symb]
         if controls:
-            initstr += "\nStatistical Controls:\n {}\n\n".format(", ".join(controls))
+            initstr += f"\nStatistical Controls:\n {', '.join(controls)}\n\n"
 
         meancentered = self._centered_vars
         if meancentered:
-            initstr += "\nMean-centered variables:\n {}\n\n".format(
-                ", ".join([self._symb_to_var.get(v) for v in meancentered]))
+            initstr += f"\nMean-centered variables:\n {', '.join([self._symb_to_var.get(v) for v in meancentered])}\n\n"
 
-        initstr += "\n\nSample size:\n{}".format(self.n_obs)
+        initstr += f"\n\nSample size:\n{self.n_obs}"
         if self.n_obs_null:
-            initstr += " ({} observations removed due to missingness)".format(self.n_obs_null)
+            initstr += f" ({self.n_obs_null} observations removed due to missingness)"
         if self.has_mediation:
             initstr += ("\n\nBootstrapping information for indirect effects:\n"
-                        "Final number of bootstrap samples: {}\n"
-                        "Number of samples discarded due to convergence issues: {}"
-                        .format(self.options["boot"], self.indirect_model._n_fail_samples))
+                        f"Final number of bootstrap samples: {self.options['boot']}\n"
+                        f"Number of samples discarded due to convergence issues: {self.indirect_model._n_fail_samples}")
 
         print(initstr)
 
@@ -931,7 +925,7 @@ class Process(object):
         for i in range(self.n_meds):
             cols_m = [self._symb_to_var[t] for t in iem._exog_terms_m]
             df_m = pd.DataFrame(boot_betas_m[i], columns=cols_m)
-            df_m["___"] = self._symb_to_var["m{}".format(i + 1)]
+            df_m["___"] = self._symb_to_var[f"m{i+1}"]
             df = df.append(df_m)
         df.index.name = "BootSample"
         df.insert(0, "OutcomeName", df["___"].values)
@@ -960,7 +954,7 @@ class Process(object):
         try:
             med_index = self._var_kwargs.get("m").index(med_name)
         except ValueError:
-            raise ValueError("The variable {} is not a mediator in the model.".format(med_name))
+            raise ValueError(f"The variable {med_name} is not a mediator in the model.")
 
         modval_symb = self.spotlight_values.copy()
 
@@ -968,7 +962,7 @@ class Process(object):
             for mod_name, mod_val in modval.items():
                 mod_symb = self._var_to_symb.get(mod_name)
                 if not mod_symb:
-                    raise ValueError("The variable {} is not a variable in the model.".format(mod_name))
+                    raise ValueError(f"The variable {mod_name} is not a variable in the model.")
                 else:
                     modval_symb[mod_symb] = mod_val
 
@@ -1007,7 +1001,7 @@ class Process(object):
             for mod_name, mod_val in modval.items():
                 mod_symb = self._var_to_symb.get(mod_name)
                 if not mod_symb:
-                    raise ValueError("The variable {} is not a variable in the model.".format(mod_name))
+                    raise ValueError(f"The variable {mod_name} is not a variable in the model.")
                 else:
                     modval_symb[mod_symb] = mod_val
 
